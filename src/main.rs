@@ -226,7 +226,7 @@ async fn main() -> Result<()> {
             .build();
 
             // Do a breakdown of all sell liquidities of the market data
-            println!("Sell liquidity for {:?}: {:?} USDC", stablebond_mint, 
+             println!("\n\n🏦 Sell liquidity for {:?}: {:?} USDC", stablebond_mint, 
             market_data.sell_liquidity_usdc_amount
                 .map(|amount| amount as f64 / 10f64.powf(USDC_DECIMALS as f64))
                 .unwrap_or(0.0)
