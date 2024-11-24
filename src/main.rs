@@ -12,6 +12,7 @@ mod trading_engine;
 mod transaction;
 mod coingecko;
 
+use crate::constants::USDC_DECIMALS;
 use crate::{
     etherfuse::EtherfuseClient, jito::JitoClient, jupiter::JupiterClient,
     switchboard::SwitchboardClient, trading_engine::TradingEngine,
@@ -223,6 +224,13 @@ async fn main() -> Result<()> {
             .with_sol_price()
             .await
             .build();
+
+            // Do a breakdown of all sell liquidities of the market data
+            println!("Sell liquidity for {:?}: {:?} USDC", stablebond_mint, 
+            market_data.sell_liquidity_usdc_amount
+                .map(|amount| amount as f64 / 10f64.powf(USDC_DECIMALS as f64))
+                .unwrap_or(0.0)
+            );
         
             match market_data.sol_price {
                 Some(price) => println!("Current SOL price: ${:.2}", price),
@@ -266,7 +274,7 @@ async fn main() -> Result<()> {
                 println!("Error sending bundle: {:?}", e)
             }
         }
-        println!("========== Sleeping for 1 minutes ==========");
+        println!("========== Sleeping for 1 minute ==========");
         tokio::time::sleep(Duration::from_secs(60 * 1)).await;
     }
 }

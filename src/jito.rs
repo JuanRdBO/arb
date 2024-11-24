@@ -14,6 +14,7 @@ use solana_sdk::signer::Signer;
 use solana_sdk::system_instruction;
 use solana_sdk::transaction::VersionedTransaction;
 use std::sync::Arc;
+use solana_rpc_client::spinner;
 
 #[derive(Clone)]
 pub struct JitoClient {
@@ -43,6 +44,7 @@ impl JitoClient {
     }
 
     pub async fn send_bundle(&mut self, txs: &[VersionedTransaction]) -> Result<()> {
+        let progress_bar = spinner::new_progress_bar();
         let jito_tip = self.wss_client.read().unwrap();
 
         let tippers: Vec<String> = self
@@ -50,6 +52,7 @@ impl JitoClient {
             .request("getTipAccounts", rpc_params![""])
             .await?;
 
+        progress_bar.println(format!("  Jito tip: {} SOL", (*jito_tip as f64) / (LAMPORTS_PER_SOL as f64)));
         let tip_ix = system_instruction::transfer(
             &self.signer().pubkey(),
             &Pubkey::try_from(tippers[0].to_string().as_str()).unwrap(),
@@ -65,22 +68,26 @@ impl JitoClient {
             .map(|tx| bincode::serialize(tx).unwrap().to_base58())
             .collect::<Vec<String>>();
 
+        progress_bar.set_message(format!("Submitting transaction..."));
         let params = rpc_params![txs];
         let resp: Result<String, _> = self.jsonrpc_client.request("sendBundle", params).await;
         match resp {
             Ok(bundle) => {
                 let now = chrono::Local::now();
-                println!(
-                    "[{}] https://explorer.jito.wtf/bundle/{bundle}",
-                    now.format("%Y-%m-%d %H:%M:%S")
-                );
+                let bundle_url = format!("https://explorer.jito.wtf/bundle/{bundle}");
+                progress_bar.set_message(format!(
+                    "[{}] {}",
+                    now.format("%Y-%m-%d %H:%M:%S"),
+                    bundle_url
+                ));
+
                 match self.check_bundle_status(&bundle).await {
-                    Ok(BundleStatusEnum::Landed) => println!("Bundle landed successfully"),
-                    Ok(BundleStatusEnum::Failed) => println!("Bundle failed to land"),
-                    Ok(BundleStatusEnum::Invalid) => println!("Bundle invalid"),
-                    Ok(BundleStatusEnum::Pending) => println!("Bundle pending"),
-                    Ok(BundleStatusEnum::Unknown) => println!("Bundle unknown"),
-                    Ok(BundleStatusEnum::Timeout) => println!("Bundle timeout"),
+                    Ok(BundleStatusEnum::Landed) => progress_bar.finish_with_message(format!("Bundle landed successfully {}\n", bundle_url)),
+                    Ok(BundleStatusEnum::Failed) => progress_bar.finish_with_message(format!("Bundle failed to land {}\n", bundle_url)),
+                    Ok(BundleStatusEnum::Invalid) => progress_bar.finish_with_message(format!("Bundle invalid {}\n", bundle_url)),
+                    Ok(BundleStatusEnum::Pending) => progress_bar.finish_with_message(format!("Bundle pending {}\n", bundle_url)),
+                    Ok(BundleStatusEnum::Unknown) => progress_bar.finish_with_message(format!("Bundle unknown {}\n", bundle_url)),
+                    Ok(BundleStatusEnum::Timeout) => progress_bar.finish_with_message(format!("Bundle timeout {}\n", bundle_url)),
                     Err(e) => eprintln!("Error checking bundle status: {:?}", e),
                 }
             }
