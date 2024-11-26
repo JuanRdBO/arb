@@ -18,6 +18,7 @@ use crate::{
     switchboard::SwitchboardClient, trading_engine::TradingEngine,
 };
 use anyhow::Result;
+use chrono::Local;
 use clap::{arg, command, Parser};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use market_data::{MarketData, MarketDataBuilder};
@@ -202,6 +203,8 @@ async fn main() -> Result<()> {
 
     loop {        
         for stablebond_mint in &stablebond_mints {
+            println!("[{}] Processing {:?}",Local::now().format("%Y-%m-%d %H:%M:%S"), stablebond_mint);
+
             let market_data: MarketData = MarketDataBuilder::new(
                 rpc_client.clone(),
                 wallet_keypair.pubkey(),
@@ -226,7 +229,7 @@ async fn main() -> Result<()> {
             .build();
 
             // Do a breakdown of all sell liquidities of the market data
-             println!("\n\n🏦 Sell liquidity for {:?}: {:?} USDC", stablebond_mint, 
+            println!("\n\n🏦 Sell liquidity for {:?}: {:?} USDC", stablebond_mint, 
             market_data.sell_liquidity_usdc_amount
                 .map(|amount| amount as f64 / 10f64.powf(USDC_DECIMALS as f64))
                 .unwrap_or(0.0)
