@@ -227,6 +227,14 @@ async fn main() -> Result<()> {
             .with_sol_price()
             .await
             .build();
+        
+            match market_data.sol_price {
+                Some(price) => println!("Current SOL price: ${:.2}", price),
+                None => {
+                    println!("Warning: Unable to get SOL price, skipping this iteration");
+                    continue;
+                }
+            };
 
             // Do a breakdown of all sell liquidities of the market data
             println!("\n\n🏦 Sell liquidity for {:?}: {:?} USDC", stablebond_mint, 
