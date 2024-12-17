@@ -84,7 +84,6 @@ impl JitoClient {
         match self.send_transactions_with_tip(txs, last_valid_block_hash).await {
             Ok(bundle_id) => {
                 println!("Transaction sent successfully: {}", bundle_id);
-                sleep(Duration::from_secs(5)).await;
                 Ok(())
             }
             Err(e) => Err(anyhow!("Failed to send transaction: {:?}", e)),
