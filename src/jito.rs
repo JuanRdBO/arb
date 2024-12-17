@@ -6,14 +6,19 @@ use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::HttpClient;
 use jsonrpsee::rpc_params;
 use serde::Deserialize;
+use serde_json::Value;
 use solana_program::native_token::LAMPORTS_PER_SOL;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{read_keypair_file, Keypair};
 use solana_sdk::signer::Signer;
 use solana_sdk::system_instruction;
 use solana_sdk::transaction::VersionedTransaction;
+use tokio::time::sleep;
 use std::sync::Arc;
+use std::time::Duration;
+use anyhow::anyhow;
 
 #[derive(Clone)]
 pub struct JitoClient {
@@ -69,76 +74,114 @@ impl JitoClient {
             .map(|tx| bincode::serialize(tx).unwrap().to_base58())
             .collect::<Vec<String>>();
 
-        println!("Submitting transaction...");
-        let params = rpc_params![txs];
-        let resp: Result<String, _> = self.jsonrpc_client.request("sendBundle", params).await;
-        match resp {
-            Ok(bundle) => {
-                let now = chrono::Local::now();
-                let bundle_url = format!("https://explorer.jito.wtf/bundle/{bundle}");
-                println!(
-                    "[{}] {}",
-                    now.format("%Y-%m-%d %H:%M:%S"),
-                    bundle_url
-                );
 
-                match self.check_bundle_status(&bundle).await {
-                    Ok(BundleStatusEnum::Landed) => println!("Bundle landed successfully {}\n", bundle_url),
-                    Ok(BundleStatusEnum::Failed) => println!("Bundle failed to land {}\n", bundle_url),
-                    Ok(BundleStatusEnum::Invalid) => println!("Bundle invalid {}\n", bundle_url),
-                    Ok(BundleStatusEnum::Pending) => println!("Bundle pending {}\n", bundle_url),
-                    Ok(BundleStatusEnum::Unknown) => println!("Bundle unknown {}\n", bundle_url),
-                    Ok(BundleStatusEnum::Timeout) => println!("Bundle timeout {}\n", bundle_url),
-                    Err(e) => eprintln!("Error checking bundle status: {:?}", e),
-                }
+            let (_recent_blockhash, last_valid_block_hash) =
+            self.rpc_client.get_latest_blockhash_with_commitment(
+                CommitmentConfig::confirmed()
+            ).await?;
+
+        println!("Submitting transaction...");        
+        match self.send_transactions_with_tip(txs, last_valid_block_hash).await {
+            Ok(bundle_id) => {
+                println!("Transaction sent successfully: {}", bundle_id);
+                sleep(Duration::from_secs(5)).await;
+                Ok(())
             }
-            Err(err) => {
-                eprintln!("Error: {:?}", err);
-            }
+            Err(e) => Err(anyhow!("Failed to send transaction: {:?}", e)),
         }
-        Ok(())
     }
 
-    async fn check_bundle_status(&self, bundle_id: &str) -> Result<BundleStatusEnum> {
-        let start_time = std::time::Instant::now();
-        let timeout = std::time::Duration::from_secs(30);
+    pub async fn send_transactions_with_tip(
+        &self,
+        serialized_transactions: Vec<String>,
+        last_valid_block_height: u64
+    ) -> anyhow::Result<String> {
+        // Send the transaction as a Jito bundle
+        let bundle_id: String = self.send_jito_bundle(serialized_transactions).await?;
+        sleep(Duration::from_secs(3)).await;
+        // Poll for confirmation status
+        let timeout: Duration = Duration::from_secs(60);
+        let interval: Duration = Duration::from_secs(5);
+        let start: tokio::time::Instant = tokio::time::Instant::now();
 
-        while start_time.elapsed() < timeout {
-            let params = rpc_params![[bundle_id]];
-            let response: Option<BundleStatusResponse> = self
-                .jsonrpc_client
-                .request("getInflightBundleStatuses", params)
-                .await?;
-     
-            println!("Bundle status0: {:?}", response);
+        println!("Bundle submitted: {}", format!("https://explorer.jito.wtf/bundle/{bundle_id}"));
 
-            if let Some(resp) = response {
-                println!("Bundle status1: {:?}", resp);
-                if let Some(status) = resp.value.first() {
-                    println!("Bundle status2: {}", status.status);
-                    match status.status.as_str() {
-                        "Landed" => return Ok(BundleStatusEnum::Landed),
-                        "Failed" => return Ok(BundleStatusEnum::Failed),
-                        "Pending" | "Invalid" => {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                            println!("Bundle elapsed: {:?}, is timeout: {:?}", start_time.elapsed(), start_time.elapsed() >= timeout);
-                            if start_time.elapsed() >= timeout {
-                                return Ok(BundleStatusEnum::Timeout);
-                            }
-                            continue;
-                        }
-                        _ => {
-                            eprintln!("Unknown status: {}", status.status);
-                            return Ok(BundleStatusEnum::Unknown);
-                        }
+        while
+            start.elapsed() < timeout ||
+            self.rpc_client.get_block_height().await? <= last_valid_block_height
+        {
+            let bundle_statuses: BundleStatusResponse = self.get_jito_bundle_statuses(
+                vec![bundle_id.clone()]
+            ).await?;
+
+            if !bundle_statuses.value.is_empty() {
+                // println!("bundle_statuses: {:?}", bundle_statuses);
+                if bundle_statuses.value[0].status == "Landed" {
+                    println!("bundle landed: {:?}", bundle_statuses.value[0].bundle_id);
+                    return Ok(bundle_statuses.value[0].bundle_id.clone());
+                } else if bundle_statuses.value[0].status == "Failed" {
+                    return Err(anyhow!("Bundle failed"));
+                }
+            }
+
+            sleep(interval).await;
+        }
+
+        Err(anyhow!("Bundle failed to confirm within the timeout period"))
+    }
+
+    pub async fn send_jito_bundle(
+        &self,
+        serialized_transactions: Vec<String>
+    ) -> anyhow::Result<String> {
+        println!("send_jito_bundle serialized_transactions: {:?}", serialized_transactions);
+        let response: Value = self.jsonrpc_client.request(
+            "sendBundle",
+            rpc_params![serialized_transactions]
+        ).await?;
+
+        // println!("send_jito_bundle response: {:?}", response);
+        if let Some(error) = response.get("error") {
+            return Err(anyhow!("Error sending bundles: {:?}", error));
+        }
+
+        Ok(response.as_str().unwrap_or_default().to_string())
+    }
+
+    pub async fn get_jito_bundle_statuses(
+        &self,
+        bundle_ids: Vec<String>
+    ) -> anyhow::Result<BundleStatusResponse> {
+        // println!("get_bundle_statuses bundle_ids: {:?}", bundle_ids);
+        let response: Option<BundleStatusResponse> = self.jsonrpc_client.request(
+            "getInflightBundleStatuses",
+            vec![bundle_ids]
+        ).await?;
+
+        // println!("get_bundle_statuses response: {:?}", response);
+
+        if let Some(resp) = response {
+            if let Some(status) = resp.value.first() {
+                match status.status.as_str() {
+                    "Landed" => {
+                        return Ok(resp);
+                    }
+                    "Failed" => {
+                        return Ok(resp);
+                    }
+                    "Pending" | "Invalid" => {
+                        println!("Bundle is pending or invalid...");
+                        return Ok(resp);
+                    }
+                    _ => {
+                        eprintln!("Unknown status: {}", status.status);
+                        return Ok(resp);
                     }
                 }
             }
-
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
 
-        Ok(BundleStatusEnum::Timeout)
+        Err(anyhow!("Unexpected response format"))
     }
 
     pub async fn get_jito_tip(&self) -> Result<u64> {
