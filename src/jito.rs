@@ -170,7 +170,13 @@ impl JitoClient {
                     }
                     "Pending" | "Invalid" => {
                         println!("Bundle is pending or invalid...");
-                        return Ok(resp);
+                        let errors: Vec<BundleErrorResponse> = self.get_jito_bundle_error(
+                            resp.value[0].bundle_id.clone()
+                        ).await?;
+                        if errors.is_empty() {
+                            return Ok(resp);
+                        }
+                        return Err(anyhow!("Bundle failed"));
                     }
                     _ => {
                         eprintln!("Unknown status: {}", status.status);
@@ -181,6 +187,23 @@ impl JitoClient {
         }
 
         Err(anyhow!("Unexpected response format"))
+    }
+
+    pub async fn get_jito_bundle_error(
+        &self,
+        bundle_id: String
+    ) -> anyhow::Result<Vec<BundleErrorResponse>> {
+        let error_url =
+            format!("https://bundles.jito.wtf/api/v1/bundles/get_bundle_error/{}", bundle_id);
+
+        let error_response: reqwest::Response = reqwest::get(&error_url).await?;
+        let errors: Vec<BundleErrorResponse> =
+            error_response.json::<Vec<BundleErrorResponse>>().await?;
+
+        for error in &errors {
+            println!("Bundle error: {} - {}", error.error, error.error_details);
+        }
+        Ok(errors)
     }
 
     pub async fn get_jito_tip(&self) -> Result<u64> {
@@ -222,6 +245,15 @@ struct BundleStatus {
 struct BundleStatusResponse {
     context: Context,
     value: Vec<BundleStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BundleErrorResponse {
+    #[serde(rename = "bundleId")]
+    pub bundle_id: String,
+    pub error: String,
+    #[serde(rename = "errorDetails")]
+    pub error_details: String,
 }
 
 #[derive(Debug, Deserialize)]
