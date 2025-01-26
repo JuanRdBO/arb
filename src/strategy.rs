@@ -212,7 +212,7 @@ impl Strategy for BuyOnJupiterSellOnEtherfuse {
 
             if potential_profit > best_profit {
                 println!("\n🎯 New best trade found!");
-                println!("Previous best profit: {}",best_profit);
+                println!("Previous best profit: {}", best_profit);
                 println!("New best profit: {}", potential_profit);
 
                 best_profit = potential_profit;
