@@ -93,7 +93,7 @@ struct Args {
         long,
         value_name = "JITO_BUNDLES_URL",
         help = "URL to the Jito Bundles API",
-        default_value = "https://slc.mainnet.block-engine.jito.wtf:443/api/v1/bundles",
+        default_value = "https://mainnet.block-engine.jito.wtf/api/v1/bundles",
         global = true
     )]
     jito_bundles_url: Option<String>,
@@ -102,7 +102,7 @@ struct Args {
         long,
         value_name = "JITO_WSS_URL",
         help = "URL to the Jito WSS API",
-        default_value = "ws://bundles-api-rest.jito.wtf/api/v1/bundles/tip_stream",
+        default_value = "wss://bundles.jito.wtf/api/v1/bundles/tip_stream",
         global = true
     )]
     jito_wss_url: Option<String>,
